@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import os
 import re
+import math
 from datetime import datetime
+from bs4 import BeautifulSoup
 
-# Sayfa Ayarları
+# --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Şantiye İlerleme Takip", layout="wide", page_icon="🏗️")
 
 # --- VERİ OKUMA VE ÖNBELLEĞE ALMA ---
@@ -19,7 +21,6 @@ df_blok, df_imalat = load_master_data()
 # --- VERİTABANI (LOG) SİMÜLASYONU ---
 LOG_FILE = "santiye_log.csv"
 if not os.path.exists(LOG_FILE):
-    # Eğer daha önce girilmiş veri yoksa boş tablo oluştur
     df_log = pd.DataFrame(columns=["Tarih", "Yüklenici", "Proje", "Parsel", "Blok", "İmalat", "İlerleme"])
     df_log.to_csv(LOG_FILE, index=False)
 
@@ -27,7 +28,6 @@ def load_logs():
     return pd.read_csv(LOG_FILE)
 
 def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
-    # Yeni girilen veriyi log dosyasına alt satır olarak ekle
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     df = pd.DataFrame([[now, yuklenici, proje, parsel, blok, imalat, ilerleme]], 
                       columns=["Tarih", "Yüklenici", "Proje", "Parsel", "Blok", "İmalat", "İlerleme"])
@@ -35,35 +35,108 @@ def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
 
 def get_latest_progress(parsel, blok, imalat):
     df_log = load_logs()
-    # Bu blok ve imalat için geçmiş kayıtları süz
     mask = (df_log["Parsel"] == int(parsel)) & (df_log["Blok"] == str(blok)) & (df_log["İmalat"] == imalat)
     filtered = df_log[mask]
     if not filtered.empty:
-        return filtered.iloc[-1]["İlerleme"] # En son girilen değeri döndür
-    return "YOK" # Hiç girilmediyse varsayılan
+        return filtered.iloc[-1]["İlerleme"]
+    return "YOK"
 
-# Değer Haritası (Kıyaslama ve Validasyon için)
 VAL_MAP = {"YOK": -1, "%0": 0, "%25": 25, "%50": 50, "%75": 75, "%100": 100}
 
-# --- SEKMELER (ARAYÜZ) ---
-tab1, tab2 = st.tabs(["📝 Veri Girişi", "📊 Yönetici Görsel Raporu"])
+# --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ ---
+def extract_coordinates(shape_tag):
+    """Şekillerin (polygon, path) yaklaşık orta noktasını hesaplar."""
+    coords = []
+    if shape_tag.name in ['polygon', 'polyline']:
+        pts = shape_tag.get('points', '').replace(',', ' ').split()
+        coords = [float(p) for p in pts if p.strip().replace('.','',1).replace('-','',1).isdigit()]
+    elif shape_tag.name == 'path':
+        d = shape_tag.get('d', '')
+        coords = [float(p) for p in re.findall(r'-?\d+\.?\d*', d)]
+    
+    if not coords or len(coords) < 2:
+        return None
+    
+    x_coords = coords[0::2]
+    y_coords = coords[1::2]
+    
+    if not x_coords or not y_coords: return None
+    return (sum(x_coords) / len(x_coords), sum(y_coords) / len(y_coords))
+
+def auto_assign_svg_ids(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        soup = BeautifulSoup(f.read(), 'xml')
+    
+    # Tüm yazıları bul
+    texts = soup.find_all(['text', 'tspan'])
+    text_data = []
+    for t in texts:
+        name = t.text.strip()
+        if not name or len(name) > 5: continue # Sadece blok isimleri gibi kısa metinleri al
+        
+        # Koordinatları bulmaya çalış
+        x = t.get('x') or (t.parent.get('x') if t.parent else None)
+        y = t.get('y') or (t.parent.get('y') if t.parent else None)
+        
+        # Transform matrix kullanılmışsa ondan koordinat çek
+        transform = t.get('transform') or (t.parent.get('transform') if t.parent else "")
+        if not x and transform and 'matrix' in transform:
+            m_vals = re.findall(r'-?\d+\.?\d*', transform)
+            if len(m_vals) >= 6:
+                x, y = m_vals[4], m_vals[5]
+                
+        if x and y:
+            text_data.append({'name': name, 'x': float(x), 'y': float(y)})
+    
+    if not text_data:
+        return False, "SVG içinde metin ve koordinat tespit edilemedi. (Yazılar patlatılmış olabilir)"
+
+    # Tüm binaları bul
+    shapes = soup.find_all(['path', 'polygon', 'polyline'])
+    shape_data = []
+    for s in shapes:
+        centroid = extract_coordinates(s)
+        if centroid:
+            shape_data.append({'tag': s, 'cx': centroid[0], 'cy': centroid[1]})
+            
+    # Mekansal Eşleştirme (En yakın ağırlık merkezini bul)
+    eslesenler = []
+    for td in text_data:
+        tx, ty = td['x'], td['y']
+        closest_shape = None
+        min_dist = float('inf')
+        
+        for sd in shape_data:
+            dist = math.hypot(tx - sd['cx'], ty - sd['cy'])
+            if dist < min_dist:
+                min_dist = dist
+                closest_shape = sd['tag']
+        
+        if closest_shape:
+            closest_shape['id'] = td['name']
+            eslesenler.append(td['name'])
+            
+    # Dosyayı yeni ID'lerle tekrar kaydet
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(str(soup))
+        
+    return True, f"Başarıyla {len(eslesenler)} adet bloğa ID atandı: {', '.join(eslesenler)}"
+
+
+# --- ARAYÜZ (SEKMELER) ---
+tab1, tab2, tab3 = st.tabs(["📝 Veri Girişi", "📊 Yönetici Raporu", "⚙️ Ayarlar (SVG)"])
 
 with tab1:
     st.header("Saha İmalat İlerleme Veri Girişi")
-    
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.subheader("Bölge Seçimi")
         yukleniciler = df_blok["Yüklenici Firma"].unique()
         secilen_yuklenici = st.selectbox("Yüklenici Adı", yukleniciler)
-        
         projeler = df_blok[df_blok["Yüklenici Firma"] == secilen_yuklenici]["Proje Adı"].unique()
         secilen_proje = st.selectbox("Proje Adı", projeler)
-        
         parseller = df_blok[(df_blok["Yüklenici Firma"] == secilen_yuklenici) & (df_blok["Proje Adı"] == secilen_proje)]["Parsel Adı"].unique()
         secilen_parsel = st.selectbox("Parsel Adı", parseller)
-        
         bloklar = df_blok[(df_blok["Yüklenici Firma"] == secilen_yuklenici) & 
                           (df_blok["Proje Adı"] == secilen_proje) & 
                           (df_blok["Parsel Adı"] == secilen_parsel)]["Blok Adı"].unique()
@@ -77,98 +150,75 @@ with tab1:
             with open(svg_path, "r", encoding="utf-8") as f:
                 st.components.v1.html(f.read(), height=400)
         else:
-            st.warning(f"Sistemde '{svg_path}' bulunamadı. Lütfen klasöre ekleyin.")
+            st.warning(f"Sistemde '{svg_path}' bulunamadı.")
 
     st.divider()
     
     if secilen_blok != "Lütfen Seçiniz...":
         st.subheader(f"🛠️ {secilen_blok} Blok Veri Giriş Ekranı")
-        
         with st.form("veri_giris_formu"):
             giris_verileri = {}
-            
-            # Excel'deki İmalatları tek tek form elemanı olarak listele
             for index, row in df_imalat.iterrows():
                 imalat_adi = row["İMALATIN ADI"]
                 son_deger = get_latest_progress(secilen_parsel, secilen_blok, imalat_adi)
-                
                 options = list(VAL_MAP.keys())
                 default_idx = options.index(son_deger) if son_deger in options else 0
                 
-                # Form Elemanı
                 giris_verileri[imalat_adi] = {
                     "old": son_deger,
-                    "new": st.selectbox(f"{imalat_adi} (Mahal: {row['BULUNDUĞU MAHAL']})", options, index=default_idx)
+                    "new": st.selectbox(f"{imalat_adi} ({row['BULUNDUĞU MAHAL']})", options, index=default_idx)
                 }
             
-            st.markdown("<br>", unsafe_allow_html=True)
             kaydet = st.form_submit_button("💾 VERİLERİ KAYDET", use_container_width=True)
-            
             if kaydet:
                 hata_var = False
-                # Hata Kontrolü (% düşüş var mı?)
                 for imalat, veriler in giris_verileri.items():
                     old_val = VAL_MAP[veriler["old"]]
                     new_val = VAL_MAP[veriler["new"]]
-                    
                     if new_val < old_val and new_val != -1: 
-                        st.error(f"HATA! {imalat} için İLERLEME, SON GİRİLEN DEĞERDEN ({veriler['old']}) DÜŞÜK OLAMAZ!")
+                        st.error(f"HATA! {imalat} için İLERLEME, ({veriler['old']}) DEĞERİNDEN DÜŞÜK OLAMAZ!")
                         hata_var = True
                         
                 if not hata_var:
-                    degisiklik_yapildi_mi = False
+                    degisildi_mi = False
                     for imalat, veriler in giris_verileri.items():
                         if veriler["new"] != veriler["old"]: 
                             save_log(secilen_yuklenici, secilen_proje, secilen_parsel, secilen_blok, imalat, veriler["new"])
-                            degisiklik_yapildi_mi = True
-                    
-                    if degisiklik_yapildi_mi:
-                        st.success("Veriler başarıyla log sistemine kaydedildi! Raporlar güncellendi.")
+                            degisildi_mi = True
+                    if degisildi_mi:
+                        st.success("Kayıt Başarılı!")
                     else:
-                        st.info("Herhangi bir ilerleme değişikliği yapılmadı.")
+                        st.info("Değişiklik yapılmadı.")
 
 with tab2:
     st.header("Rapor Ekranı")
-    
     col3, col4, col5 = st.columns(3)
     rap_yuklenici = col3.selectbox("Rapor - Yüklenici", yukleniciler)
     rap_proje = col4.selectbox("Rapor - Proje", df_blok[df_blok["Yüklenici Firma"] == rap_yuklenici]["Proje Adı"].unique())
     rap_parsel = col5.selectbox("Rapor - Parsel", df_blok[(df_blok["Yüklenici Firma"] == rap_yuklenici) & (df_blok["Proje Adı"] == rap_proje)]["Parsel Adı"].unique())
     
-    st.divider()
-    st.markdown("### 📌 Lejant:")
-    st.markdown("⬜ **YOK (İmalat Yok)** &nbsp;&nbsp;|&nbsp;&nbsp; 🟥 **%0 (Başlanmadı)** &nbsp;&nbsp;|&nbsp;&nbsp; 🟨🟩 **%25-%75 (Kısmi Dolgu-Devam Ediyor)** &nbsp;&nbsp;|&nbsp;&nbsp; 🟩 **%100 (Tamamlandı)**")
+    st.markdown("### 📌 Lejant: ⬜ YOK | 🟥 %0 | 🟨🟩 %25-%75 (Kısmi) | 🟩 %100")
     st.divider()
     
     parsel_bloklari = df_blok[(df_blok["Parsel Adı"] == rap_parsel)]["Blok Adı"].unique()
     df_log_all = load_logs()
-    
     rap_svg_path = f"{rap_parsel} Parsel.svg"
-    if not os.path.exists(rap_svg_path):
-        st.error("Rapor oluşturulabilmesi için SVG dosyası eksik.")
-    else:
+    
+    if os.path.exists(rap_svg_path):
         with open(rap_svg_path, "r", encoding="utf-8") as f:
             base_svg = f.read()
             
         for index, row in df_imalat.iterrows():
             imalat_adi = row["İMALATIN ADI"]
-            
-            # Her bir blok için son ilerleme değerini hesapla
             blok_degerleri = {}
             for b in parsel_bloklari:
                 mask = (df_log_all["Parsel"] == rap_parsel) & (df_log_all["Blok"] == str(b)) & (df_log_all["İmalat"] == imalat_adi)
                 filt = df_log_all[mask]
-                if not filt.empty:
-                    blok_degerleri[b] = filt.iloc[-1]["İlerleme"]
-                else:
-                    blok_degerleri[b] = "YOK"
+                blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
-            # SVG İçine Dinamik CSS ve Gradient Gömme İşlemi
             defs = "<defs>\n"
             styles = "<style>\n"
-            
             for b, val in blok_degerleri.items():
-                # stroke-width ve color ile blok sınırlarını belirginleştiriyoruz
                 if val == "YOK":
                     styles += f"#{b} {{ fill: #ffffff !important; stroke: #000000 !important; stroke-width: 2px; }}\n"
                 elif val == "%0":
@@ -176,25 +226,34 @@ with tab2:
                 elif val == "%100":
                     styles += f"#{b} {{ fill: #006400 !important; stroke: #000000 !important; stroke-width: 2px; }}\n"
                 else: 
-                    # %25, %50, %75 için Kısmi dolgu (Aşağıdan yukarıya bardak gibi dolar)
                     num_val = int(val.replace('%', ''))
                     grad_id = f"grad_{b}_{num_val}"
-                    defs += f'''
-                    <linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%">
-                        <stop offset="{num_val}%" stop-color="#90EE90" />
-                        <stop offset="{num_val}%" stop-color="#ffffff" />
-                    </linearGradient>
-                    '''
+                    defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#90EE90" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
                     styles += f"#{b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 2px; }}\n"
             
-            defs += "</defs>\n"
-            styles += "</style>\n"
-            
-            # Dinamik kodları orijinal SVG'nin içine (ilk tag'den sonra) yerleştir
+            defs += "</defs>\n</style>\n"
+            # SVG root etiketini bul ve stilleri yerleştir
             modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, base_svg, count=1, flags=re.IGNORECASE)
             
-            st.markdown(f"#### {rap_yuklenici} | {rap_proje} | {rap_parsel} Parsel")
-            st.markdown(f"**İmalat:** {imalat_adi} - ({row['BULUNDUĞU MAHAL']})")
-            
+            st.markdown(f"#### {rap_yuklenici} | {rap_proje} | {rap_parsel} Parsel | {imalat_adi}")
             st.components.v1.html(modified_svg, height=450)
             st.markdown("<hr>", unsafe_allow_html=True)
+    else:
+        st.error("Rapor için SVG dosyası eksik.")
+
+with tab3:
+    st.header("Sistem Ayarları")
+    st.info("Bu ekranı, sisteme yeni bir AutoCAD SVG dosyası yüklediğinizde blok ID'lerini otomatik atamak için kullanın.")
+    
+    svg_dosyalari = [f for f in os.listdir() if f.endswith(".svg")]
+    if svg_dosyalari:
+        secilen_svg = st.selectbox("İşlem Yapılacak SVG Dosyası:", svg_dosyalari)
+        if st.button("🚀 Seçili SVG'yi Otomatik İsimlendir"):
+            basarili, mesaj = auto_assign_svg_ids(secilen_svg)
+            if basarili:
+                st.success(mesaj)
+                st.balloons()
+            else:
+                st.error(mesaj)
+    else:
+        st.warning("Klasörde hiç .svg dosyası bulunamadı.")
