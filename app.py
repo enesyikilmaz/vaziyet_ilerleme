@@ -4,7 +4,7 @@ import os
 import re
 import math
 from datetime import datetime
-import ezdxf
+from bs4 import BeautifulSoup
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Şantiye İlerleme Takip", layout="wide", page_icon="🏗️")
@@ -47,108 +47,93 @@ def get_latest_progress(parsel, blok, imalat):
 
 VAL_MAP = {"YOK": -1, "%0": 0, "%25": 25, "%50": 50, "%75": 75, "%100": 100}
 
-# --- DXF'TEN SVG ÜRETME MODÜLÜ ---
-def process_dxf_to_svg(dxf_path, output_svg_path):
-    try:
-        doc = ezdxf.readfile(dxf_path)
-        msp = doc.modelspace()
-    except Exception as e:
-        return False, f"DXF okuma hatası: {e}"
+# --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ ---
+def extract_coordinates(shape_tag):
+    coords = []
+    if shape_tag.name in ['polygon', 'polyline']:
+        pts = shape_tag.get('points', '').replace(',', ' ').split()
+        coords = [float(p) for p in pts if p.strip().replace('.','',1).replace('-','',1).isdigit()]
+    elif shape_tag.name == 'path':
+        d = shape_tag.get('d', '')
+        coords = [float(p) for p in re.findall(r'-?\d+\.?\d*', d)]
+    
+    if not coords or len(coords) < 2: return None
+    
+    x_coords = coords[0::2]
+    y_coords = coords[1::2]
+    if not x_coords or not y_coords: return None
+    return (sum(x_coords) / len(x_coords), sum(y_coords) / len(y_coords))
 
-    texts = []
-    polygons = []
-
-    # 1. Metinleri (TEXT ve MTEXT) Bul
-    for entity in msp.query('TEXT MTEXT'):
-        text_val = entity.dxf.text.strip()
-        if not text_val or len(text_val) > 10: continue
-        
-        insert = entity.dxf.insert
-        texts.append({"name": text_val, "x": insert.x, "y": insert.y})
-
-    # 2. Şekilleri (POLYLINE ve LWPOLYLINE) Bul
-    for entity in msp.query('LWPOLYLINE POLYLINE'):
-        points = []
-        if entity.dxftype() == 'LWPOLYLINE':
-            points = [(p[0], p[1]) for p in entity.get_points('xy')]
-        else:
-            points = [(p.dxf.location.x, p.dxf.location.y) for p in entity.vertices]
-        
-        if len(points) > 2:
-            cx = sum([p[0] for p in points]) / len(points)
-            cy = sum([p[1] for p in points]) / len(points)
-            polygons.append({"points": points, "cx": cx, "cy": cy})
-
-    if not texts: return False, "DXF içinde blok isimleri (metin) bulunamadı."
-    if not polygons: return False, "DXF içinde blok sınırları (polyline) bulunamadı."
-
-    # 3. Eşleştirme (Mekansal Analiz) ve Sınırları Belirleme
-    matched_blocks = []
-    all_x, all_y = [], []
+def auto_assign_svg_ids(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        soup = BeautifulSoup(f.read(), 'xml')
+    
+    # SVG'ye viewbox bazlı scale sağlamak için CSS ekleyelim (Responsive yapı)
+    svg_tag = soup.find('svg')
+    if svg_tag:
+        svg_tag['style'] = "width: 100%; height: auto;"
+    
+    texts = soup.find_all(['text', 'tspan'])
+    text_data = []
     
     for t in texts:
-        closest_poly = None
+        raw_text = t.text.strip()
+        # MTEXT içindeki \pxqc; gibi Autocad format kodlarını temizle
+        clean_text = re.sub(r'\\[A-Za-z0-9~]+;', '', raw_text).strip()
+        
+        if not clean_text or len(clean_text) > 5: continue
+        
+        # Koordinatları transform="translate(X Y)" içinden al (Gönderdiğiniz koda göre uyarlanmıştır)
+        transform = t.get('transform') or (t.parent.get('transform') if t.parent else "")
+        x, y = None, None
+        
+        if 'translate' in transform:
+            m = re.search(r'translate\(\s*(-?\d+\.?\d*)\s+(-?\d+\.?\d*)\s*\)', transform)
+            if m:
+                x, y = float(m.group(1)), float(m.group(2))
+        
+        if x is not None and y is not None:
+            text_data.append({'name': clean_text, 'x': x, 'y': y})
+            # Ekrandaki metni temiz haliyle güncelle
+            t.string = clean_text
+
+    if not text_data:
+        return False, "Metin veya koordinat bulunamadı."
+
+    shapes = soup.find_all(['path', 'polygon', 'polyline'])
+    shape_data = []
+    for s in shapes:
+        centroid = extract_coordinates(s)
+        if centroid:
+            shape_data.append({'tag': s, 'cx': centroid[0], 'cy': centroid[1]})
+            
+    eslesenler = []
+    for td in text_data:
+        tx, ty = td['x'], td['y']
+        closest_shape = None
         min_dist = float('inf')
-        for p in polygons:
-            dist = math.hypot(t["x"] - p["cx"], t["y"] - p["cy"])
+        
+        for sd in shape_data:
+            dist = math.hypot(tx - sd['cx'], ty - sd['cy'])
             if dist < min_dist:
                 min_dist = dist
-                closest_poly = p
+                closest_shape = sd['tag']
         
-        if closest_poly:
-            matched_blocks.append({"id": t["name"], "points": closest_poly["points"]})
-            all_x.extend([pt[0] for pt in closest_poly["points"]])
-            all_y.extend([pt[1] for pt in closest_poly["points"]])
-
-    if not matched_blocks: return False, "Yazılar ile şekiller eşleştirilemedi."
-
-    # 4. Koordinatları SVG'ye Uydurma (Normalizasyon ve Y Ekseni Çevirme)
-    min_x, max_x = min(all_x), max(all_x)
-    min_y, max_y = min(all_y), max(all_y)
-    
-    cad_width = max_x - min_x
-    cad_height = max_y - min_y
-    
-    svg_view_width = 800
-    svg_view_height = 600
-    
-    # Orantılı ölçekleme
-    scale = min(svg_view_width / (cad_width or 1), svg_view_height / (cad_height or 1)) * 0.9
-    
-    x_offset = (svg_view_width - (cad_width * scale)) / 2
-    y_offset = (svg_view_height - (cad_height * scale)) / 2
-
-    svg_content = f'<svg viewBox="0 0 {svg_view_width} {svg_view_height}" xmlns="http://www.w3.org/2000/svg">\n'
-    svg_content += '<g stroke="#000000" stroke-width="2" fill="none">\n'
-    
-    eslesenler = []
-    for mb in matched_blocks:
-        svg_pts = []
-        for px, py in mb["points"]:
-            sx = ((px - min_x) * scale) + x_offset
-            # SVG'de Y ekseni aşağı doğru artar, bu yüzden CAD'in Y eksenini ters çeviriyoruz
-            sy = svg_view_height - (((py - min_y) * scale) + y_offset)
-            svg_pts.append(f"{sx},{sy}")
+        if closest_shape:
+            # Hem ID atıyoruz hem de doldurma ve çizgi özelliklerini rapor için şimdiden belirliyoruz
+            closest_shape['id'] = td['name']
+            closest_shape['fill'] = "none" # Başlangıçta şeffaf
+            closest_shape['stroke'] = "#000"
+            closest_shape['stroke-width'] = "3"
+            eslesenler.append(td['name'])
             
-        points_str = " ".join(svg_pts)
-        svg_content += f'  <polygon id="{mb["id"]}" points="{points_str}" />\n'
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(str(soup))
         
-        # Etiketleri (A, B, C) SVG ortasına yazdıralım
-        tcx = sum([float(p.split(',')[0]) for p in svg_pts]) / len(svg_pts)
-        tcy = sum([float(p.split(',')[1]) for p in svg_pts]) / len(svg_pts)
-        svg_content += f'  <text x="{tcx}" y="{tcy}" font-family="Arial" font-size="20" font-weight="bold" fill="#000" text-anchor="middle" dominant-baseline="middle" pointer-events="none">{mb["id"]}</text>\n'
-        eslesenler.append(mb["id"])
-
-    svg_content += '</g>\n</svg>'
-
-    # Üretilen SVG'yi kaydet
-    with open(output_svg_path, "w", encoding="utf-8") as f:
-        f.write(svg_content)
-        
-    return True, f"Başarı! {len(eslesenler)} blok eşleştirildi ve SVG oluşturuldu: {', '.join(eslesenler)}"
+    return True, f"Başarıyla {len(eslesenler)} adet bloğa ID atandı: {', '.join(eslesenler)}"
 
 # --- ARAYÜZ (SEKMELER) ---
-tab1, tab2, tab3 = st.tabs(["📝 Veri Girişi", "📊 Yönetici Raporu", "⚙️ Ayarlar (DXF)"])
+tab1, tab2, tab3 = st.tabs(["📝 Veri Girişi", "📊 Yönetici Raporu", "⚙️ Ayarlar (SVG)"])
 
 with tab1:
     st.header("Saha İmalat İlerleme Veri Girişi")
@@ -174,7 +159,7 @@ with tab1:
             with open(svg_path, "r", encoding="utf-8") as f:
                 st.components.v1.html(f.read(), height=450)
         else:
-            st.warning(f"Bu parsel için görsel henüz üretilmedi. Lütfen 'Ayarlar (DXF)' sekmesinden DXF dosyasını işleyin.")
+            st.warning(f"Sistemde '{svg_path}' bulunamadı.")
 
     st.divider()
     
@@ -252,7 +237,6 @@ with tab2:
                 else: 
                     num_val = int(val.replace('%', ''))
                     grad_id = f"grad_{b}_{num_val}"
-                    # Alttan yukarı dolgu (Y1=100%, Y2=0%)
                     defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#90EE90" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
                     styles += f"#{b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; }}\n"
             
@@ -260,28 +244,25 @@ with tab2:
             modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, base_svg, count=1, flags=re.IGNORECASE)
             
             st.markdown(f"#### {rap_yuklenici} | {rap_proje} | {rap_parsel} Parsel | {imalat_adi}")
-            st.components.v1.html(modified_svg, height=450)
+            st.components.v1.html(modified_svg, height=600)
             st.markdown("<hr>", unsafe_allow_html=True)
     else:
-        st.error("Rapor oluşturulabilmesi için öncelikle DXF dosyasının işlenmesi gerekiyor.")
+        st.error("Rapor oluşturulabilmesi için öncelikle SVG dosyasının yüklenmesi gerekiyor.")
 
 with tab3:
-    st.header("Sistem Ayarları (DXF İşleyici)")
-    st.info("AutoCAD'den aldığınız .dxf dosyasını sisteme entegre edip uygulamanın okuyabileceği akıllı görseli (SVG) oluşturmak için bu ekranı kullanın.")
+    st.header("Sistem Ayarları (SVG İşleyici)")
+    st.info("AutoCAD'den aldığınız .svg dosyasındaki blokları otomatik eşleştirmek ve metinleri temizlemek için bu ekranı kullanın.")
     
-    dxf_dosyalari = [f for f in os.listdir() if f.endswith(".dxf")]
-    if dxf_dosyalari:
-        secilen_dxf = st.selectbox("İşlem Yapılacak DXF Dosyası:", dxf_dosyalari)
+    svg_dosyalari = [f for f in os.listdir() if f.endswith(".svg")]
+    if svg_dosyalari:
+        secilen_svg = st.selectbox("İşlem Yapılacak SVG Dosyası:", svg_dosyalari)
         
-        # Dosya isminden Parsel adını tahmin et (Örn: "8 Parsel.dxf" -> "8 Parsel.svg")
-        hedef_isim = secilen_dxf.replace(".dxf", ".svg")
-        
-        if st.button("🚀 DXF'i İşle ve Akıllı SVG Üret"):
-            basarili, mesaj = process_dxf_to_svg(secilen_dxf, hedef_isim)
+        if st.button("🚀 SVG'yi İşle ve Otomatik İsimlendir"):
+            basarili, mesaj = auto_assign_svg_ids(secilen_svg)
             if basarili:
                 st.success(mesaj)
                 st.balloons()
             else:
                 st.error(mesaj)
     else:
-        st.warning("Klasörde hiç .dxf dosyası bulunamadı. Lütfen GitHub'a AutoCAD DXF dosyalarınızı yükleyin.")
+        st.warning("Klasörde hiç .svg dosyası bulunamadı.")
