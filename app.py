@@ -47,57 +47,6 @@ def get_latest_progress(parsel, blok, imalat):
 
 VAL_MAP = {"YOK": -1, "%0": 0, "%25": 25, "%50": 50, "%75": 75, "%100": 100}
 
-# --- RESPONSIVE SVG VE LEJANT RENDER FONKSİYONU ---
-def render_responsive_svg(svg_string):
-    # Sabit genişlik ve yükseklikleri temizle ki CSS devralabilsin
-    svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
-    svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
-    
-    if 'style="' in svg_string:
-        svg_string = re.sub(r'(<svg[^>]*)style="([^"]*)"', r'\1style="\2; width:100%; height:auto; max-height: 680px;"', svg_string, flags=re.IGNORECASE)
-    else:
-        svg_string = re.sub(r'(<svg[^>]*)', r'\1 style="width:100%; height:auto; max-height: 680px;"', svg_string, count=1, flags=re.IGNORECASE)
-    
-    html_content = f"""
-    <style>
-        body {{ margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; background-color: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }}
-        .report-container {{ position: relative; width: 100%; max-width: 1000px; text-align: center; }}
-        svg {{ max-width: 100%; height: auto; max-height: 680px; }}
-        
-        /* Sağ Alt Köşedeki Dinamik Lejant Kutusu */
-        .legend-box {{
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(241, 242, 246, 0.95);
-            padding: 12px 15px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            text-align: left;
-            font-size: 12px;
-            font-weight: 600;
-            color: #2c3e50;
-            border: 1px solid #ced6e0;
-        }}
-        .legend-item {{ display: flex; align-items: center; margin-bottom: 8px; }}
-        .legend-item:last-child {{ margin-bottom: 0; }}
-        .color-box {{ width: 16px; height: 16px; margin-right: 10px; border: 1px solid #7f8c8d; border-radius: 3px; }}
-    </style>
-    <div class="report-container">
-        {svg_string}
-        <div class="legend-box">
-            <div class="legend-item"><div class="color-box" style="background: #d9d9d9;"></div> İMALAT YOK</div>
-            <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> %0 (BAŞLANMADI)</div>
-            <div class="legend-item">
-                <div class="color-box" style="background: linear-gradient(to top, #7bed9f 50%, #ffffff 50%);"></div>
-                %25-%75 (DEVAM EDİYOR)
-            </div>
-            <div class="legend-item"><div class="color-box" style="background: #009432;"></div> %100 (TAMAMLANDI)</div>
-        </div>
-    </div>
-    """
-    st.components.v1.html(html_content, height=730)
-
 # --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ ---
 def auto_assign_svg_ids(file_path):
     def extract_coordinates(shape_tag):
@@ -251,6 +200,52 @@ with tab1:
         with open(rap_svg_path, "r", encoding="utf-8") as f:
             base_svg = f.read()
             
+        # Tüm SVG'leri ve sayfaları içinde toplayacağımız devasa HTML metni
+        full_html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap');
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: transparent; margin: 0; padding: 10px; }
+            
+            .action-bar { text-align: right; margin-bottom: 20px; position: sticky; top: 10px; z-index: 1000; }
+            .print-btn { background-color: #e74c3c; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.2); transition: 0.3s; }
+            .print-btn:hover { background-color: #c0392b; transform: scale(1.02); }
+
+            .page-container { background: #ffffff; padding: 40px; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.05); margin-bottom: 40px; position: relative; max-width: 1100px; margin-left: auto; margin-right: auto; }
+            
+            .header-titles { text-align: center; margin-bottom: 30px; }
+            .header-titles h4 { color: #57606f; margin: 0 0 5px 0; font-size: 16px; }
+            .header-titles h2 { color: #2c3e50; margin: 0 0 5px 0; font-size: 28px; text-transform: uppercase; }
+            .header-titles h5 { color: #7f8c8d; margin: 0; font-size: 15px; font-weight: normal; }
+
+            .svg-wrapper { text-align: center; width: 100%; display: flex; justify-content: center; }
+            .svg-wrapper svg { max-width: 100%; height: auto; max-height: 600px; }
+
+            .legend-box { position: absolute; bottom: 30px; right: 30px; background: rgba(241, 242, 246, 0.95); padding: 12px 15px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: left; font-size: 12px; font-weight: 600; color: #2c3e50; border: 1px solid #ced6e0; }
+            .legend-item { display: flex; align-items: center; margin-bottom: 8px; }
+            .legend-item:last-child { margin-bottom: 0; }
+            .color-box { width: 16px; height: 16px; margin-right: 10px; border: 1px solid #7f8c8d; border-radius: 3px; }
+
+            /* YAZDIRMA (PDF) AYARLARI */
+            @media print {
+                body { padding: 0; background-color: #ffffff; }
+                .action-bar { display: none !important; }
+                .page-container { box-shadow: none; border-radius: 0; padding: 0; margin: 0; padding-top: 20mm; page-break-after: always; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: flex-start; }
+                .page-container:last-child { page-break-after: auto; }
+                .legend-box { position: absolute; bottom: 20mm; right: 10mm; box-shadow: none; border: 1px solid #ced6e0; }
+                .svg-wrapper svg { max-height: 65vh; }
+            }
+        </style>
+        </head>
+        <body>
+            <div class="action-bar">
+                <button class="print-btn" onclick="window.print()">🖨️ PDF OLARAK İNDİR</button>
+            </div>
+        """
+        
+        # Her imalat için yeni bir Sayfa (Page) oluşturuluyor
         for index, row in df_imalat.iterrows():
             imalat_adi = row["İMALATIN ADI"]
             kirilim_adi = row["ALT KIRILIM"]
@@ -262,36 +257,59 @@ with tab1:
                 filt = df_log_all[mask]
                 blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
+            # SVG boyutlarını CSS'e devretmek için temizle
+            svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', base_svg, flags=re.IGNORECASE)
+            svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
+            
             defs = "<defs>\n"
             styles = "<style type='text/css'>\n"
             
             for b, val in blok_degerleri.items():
                 if val == "YOK":
-                    # Açık Gri Dolgu
                     styles += f"#{b} {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
                     styles += f"#{b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%100":
-                    # Koyu Yeşil
                     styles += f"#{b} {{ fill: #009432 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 else: 
                     num_val = int(val.replace('%', ''))
                     grad_id = f"grad_{b}_{num_val}"
-                    # Açık Yeşil Geçişli (Üst kısım beyaz kalmaya devam ediyor)
                     defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#7bed9f" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
                     styles += f"#{b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
             
             defs += "</defs>\n"
             styles += "</style>\n"
             
-            modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, base_svg, count=1, flags=re.IGNORECASE)
+            modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, svg_string, count=1, flags=re.IGNORECASE)
             
-            st.markdown(f"<h4 style='text-align: center; color: #57606f; margin-top: 10px;'>{secilen_yuklenici} &nbsp;|&nbsp; {secilen_proje} &nbsp;|&nbsp; {secilen_parsel} PARSEL</h4>", unsafe_allow_html=True)
-            st.markdown(f"<h2 style='text-align: center; margin-top: -10px;'>{imalat_adi}</h2>", unsafe_allow_html=True)
-            st.markdown(f"<h5 style='text-align: center; color: #747d8c; margin-top: -15px;'>{kirilim_adi} - <i>{mahal}</i></h5>", unsafe_allow_html=True)
-            
-            render_responsive_svg(modified_svg)
-            st.markdown("<hr style='border: 2px solid #dfe4ea;'>", unsafe_allow_html=True)
+            # HTML Blok (Bir Sayfa)
+            full_html += f"""
+            <div class="page-container">
+                <div class="header-titles">
+                    <h4>{secilen_yuklenici} | {secilen_proje} | {secilen_parsel} PARSEL</h4>
+                    <h2>{imalat_adi}</h2>
+                    <h5><b>{kirilim_adi}</b> - <i>{mahal}</i></h5>
+                </div>
+                <div class="svg-wrapper">
+                    {modified_svg}
+                </div>
+                <div class="legend-box">
+                    <div class="legend-item"><div class="color-box" style="background: #d9d9d9;"></div> İMALAT YOK</div>
+                    <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> %0 (BAŞLANMADI)</div>
+                    <div class="legend-item">
+                        <div class="color-box" style="background: linear-gradient(to top, #7bed9f 50%, #ffffff 50%);"></div>
+                        %25-%75 (DEVAM EDİYOR)
+                    </div>
+                    <div class="legend-item"><div class="color-box" style="background: #009432;"></div> %100 (TAMAMLANDI)</div>
+                </div>
+            </div>
+            """
+
+        full_html += "</body></html>"
+        
+        # Tüm sayfaları içinde barındıran scroll edilebilir ekranı yükle
+        st.components.v1.html(full_html, height=850, scrolling=True)
+        
     else:
         st.info("👈 Soldaki panelden seçim yapabilirsiniz. İlgili parselin görseli yüklendiğinde burada renklendirilmiş raporlar listelenecektir.")
 
