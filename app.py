@@ -200,7 +200,6 @@ with tab1:
         with open(rap_svg_path, "r", encoding="utf-8") as f:
             base_svg = f.read()
             
-        # Tüm SVG'leri ve sayfaları içinde toplayacağımız devasa HTML metni
         full_html = """
         <!DOCTYPE html>
         <html>
@@ -215,27 +214,45 @@ with tab1:
 
             .page-container { background: #ffffff; padding: 40px; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.05); margin-bottom: 40px; position: relative; max-width: 1100px; margin-left: auto; margin-right: auto; }
             
-            .header-titles { text-align: center; margin-bottom: 30px; }
+            .header-titles { text-align: center; margin-bottom: 20px; }
             .header-titles h4 { color: #57606f; margin: 0 0 5px 0; font-size: 16px; }
-            .header-titles h2 { color: #2c3e50; margin: 0 0 5px 0; font-size: 28px; text-transform: uppercase; }
-            .header-titles h5 { color: #7f8c8d; margin: 0; font-size: 15px; font-weight: normal; }
+            .header-titles h2 { color: #2c3e50; margin: 0 0 5px 0; font-size: 26px; text-transform: uppercase; }
+            .header-titles h5 { color: #7f8c8d; margin: 0; font-size: 14px; font-weight: normal; }
 
             .svg-wrapper { text-align: center; width: 100%; display: flex; justify-content: center; }
-            .svg-wrapper svg { max-width: 100%; height: auto; max-height: 600px; }
+            .svg-wrapper svg { max-width: 100%; height: auto; max-height: 550px; }
 
             .legend-box { position: absolute; bottom: 30px; right: 30px; background: rgba(241, 242, 246, 0.95); padding: 12px 15px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: left; font-size: 12px; font-weight: 600; color: #2c3e50; border: 1px solid #ced6e0; }
             .legend-item { display: flex; align-items: center; margin-bottom: 8px; }
             .legend-item:last-child { margin-bottom: 0; }
             .color-box { width: 16px; height: 16px; margin-right: 10px; border: 1px solid #7f8c8d; border-radius: 3px; }
 
-            /* YAZDIRMA (PDF) AYARLARI */
+            /* BOŞ SAYFA ENGELLEYİCİ KUSURSUZ YAZDIRMA AYARLARI */
             @media print {
-                body { padding: 0; background-color: #ffffff; }
+                @page { margin: 0; size: auto; }
+                body { padding: 0; background-color: #ffffff; -webkit-print-color-adjust: exact; }
                 .action-bar { display: none !important; }
-                .page-container { box-shadow: none; border-radius: 0; padding: 0; margin: 0; padding-top: 20mm; page-break-after: always; width: 100%; height: 95vh; display: flex; flex-direction: column; justify-content: flex-start; }
-                .page-container:last-child { page-break-after: auto; }
-                .legend-box { position: absolute; bottom: 20mm; right: 10mm; box-shadow: none; border: 1px solid #ced6e0; }
-                .svg-wrapper svg { max-height: 65vh; }
+                
+                /* Her bir sayfayı esnemez bir kutuya hapsediyoruz */
+                .page-container { 
+                    box-shadow: none; 
+                    border-radius: 0; 
+                    padding: 0; 
+                    margin: 0; 
+                    width: 100vw; 
+                    height: 100vh; /* Tam 1 sayfa yüksekliği */
+                    page-break-after: always; 
+                    page-break-inside: avoid;
+                    display: block; /* Flex'in yazdırma buglarını engeller */
+                    position: relative;
+                    box-sizing: border-box;
+                    padding-top: 15mm;
+                }
+                .page-container:last-child { page-break-after: avoid; }
+                
+                .svg-wrapper { margin-top: 10mm; }
+                .svg-wrapper svg { max-height: 70vh !important; }
+                .legend-box { bottom: 15mm; right: 15mm; box-shadow: none; border: 1px solid #000; }
             }
         </style>
         </head>
@@ -245,7 +262,6 @@ with tab1:
             </div>
         """
         
-        # Her imalat için yeni bir Sayfa (Page) oluşturuluyor
         for index, row in df_imalat.iterrows():
             imalat_adi = row["İMALATIN ADI"]
             kirilim_adi = row["ALT KIRILIM"]
@@ -257,7 +273,6 @@ with tab1:
                 filt = df_log_all[mask]
                 blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
-            # SVG boyutlarını CSS'e devretmek için temizle
             svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', base_svg, flags=re.IGNORECASE)
             svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
             
@@ -282,7 +297,6 @@ with tab1:
             
             modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, svg_string, count=1, flags=re.IGNORECASE)
             
-            # HTML Blok (Bir Sayfa)
             full_html += f"""
             <div class="page-container">
                 <div class="header-titles">
@@ -307,7 +321,6 @@ with tab1:
 
         full_html += "</body></html>"
         
-        # Tüm sayfaları içinde barındıran scroll edilebilir ekranı yükle
         st.components.v1.html(full_html, height=850, scrolling=True)
         
     else:
