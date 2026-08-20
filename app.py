@@ -282,7 +282,7 @@ with tab1:
             
             modified_svg = svg_string
             
-            # Her bloğun ID'sini bu sekmeye özel yapıyoruz (Örn: A -> A_svg_vaziyet_0)
+            # Her bloğun ID'sini bu sekmeye özel yapıyoruz
             for b in parsel_bloklari:
                 modified_svg = re.sub(rf'id="{re.escape(b)}"', f'id="{b}_{uid}"', modified_svg)
             
@@ -290,7 +290,7 @@ with tab1:
             styles = "<style type='text/css'>\n"
             
             for b, val in blok_degerleri.items():
-                unique_b = f"{b}_{uid}" # Stilleri bu yeni benzersiz ID'lere atıyoruz
+                unique_b = f"{b}_{uid}"
                 if val == "YOK":
                     styles += f"#{unique_b} {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
@@ -309,6 +309,7 @@ with tab1:
             # Stilleri ve gradientleri SVG'nin içine göm
             modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, modified_svg, count=1, flags=re.IGNORECASE)
             
+            # Güncellenmiş, Yüzdesiz Lejant Ekranı
             full_html += f"""
             <div class="page-container">
                 <div class="header-titles">
@@ -321,12 +322,12 @@ with tab1:
                 </div>
                 <div class="legend-box">
                     <div class="legend-item"><div class="color-box" style="background: #d9d9d9;"></div> İMALAT YOK</div>
-                    <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> %0 (BAŞLANMADI)</div>
+                    <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> BAŞLANMADI</div>
                     <div class="legend-item">
                         <div class="color-box" style="background: linear-gradient(to top, #7bed9f 50%, #ffffff 50%);"></div>
-                        %25-%75 (DEVAM EDİYOR)
+                        DEVAM EDİYOR
                     </div>
-                    <div class="legend-item"><div class="color-box" style="background: #009432;"></div> %100 (TAMAMLANDI)</div>
+                    <div class="legend-item"><div class="color-box" style="background: #009432;"></div> TAMAMLANDI</div>
                 </div>
             </div>
             """
