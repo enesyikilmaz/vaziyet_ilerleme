@@ -86,7 +86,7 @@ def render_responsive_svg(svg_string):
     <div class="report-container">
         {svg_string}
         <div class="legend-box">
-            <div class="legend-item"><div class="color-box" style="background: #ffffff;"></div> İMALAT YOK</div>
+            <div class="legend-item"><div class="color-box" style="background: #d9d9d9;"></div> İMALAT YOK</div>
             <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> %0 (BAŞLANMADI)</div>
             <div class="legend-item">
                 <div class="color-box" style="background: linear-gradient(to top, #7bed9f 50%, #ffffff 50%);"></div>
@@ -267,8 +267,8 @@ with tab1:
             
             for b, val in blok_degerleri.items():
                 if val == "YOK":
-                    # Beyaz Dolgu
-                    styles += f"#{b} {{ fill: #ffffff !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    # Açık Gri Dolgu
+                    styles += f"#{b} {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
                     styles += f"#{b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%100":
@@ -277,7 +277,7 @@ with tab1:
                 else: 
                     num_val = int(val.replace('%', ''))
                     grad_id = f"grad_{b}_{num_val}"
-                    # Açık Yeşil Geçişli
+                    # Açık Yeşil Geçişli (Üst kısım beyaz kalmaya devam ediyor)
                     defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#7bed9f" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
                     styles += f"#{b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
             
