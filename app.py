@@ -47,24 +47,56 @@ def get_latest_progress(parsel, blok, imalat):
 
 VAL_MAP = {"YOK": -1, "%0": 0, "%25": 25, "%50": 50, "%75": 75, "%100": 100}
 
-# --- RESPONSIVE SVG RENDER FONKSİYONU ---
+# --- RESPONSIVE SVG VE LEJANT RENDER FONKSİYONU ---
 def render_responsive_svg(svg_string):
     # Sabit genişlik ve yükseklikleri temizle ki CSS devralabilsin
     svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
     svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
     
+    if 'style="' in svg_string:
+        svg_string = re.sub(r'(<svg[^>]*)style="([^"]*)"', r'\1style="\2; width:100%; height:auto; max-height: 680px;"', svg_string, flags=re.IGNORECASE)
+    else:
+        svg_string = re.sub(r'(<svg[^>]*)', r'\1 style="width:100%; height:auto; max-height: 680px;"', svg_string, count=1, flags=re.IGNORECASE)
+    
     html_content = f"""
     <style>
-        body {{ margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; background-color: transparent; }}
-        .svg-container {{ width: 100%; text-align: center; }}
-        svg {{ max-width: 100%; height: auto; max-height: 700px; }}
+        body {{ margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; background-color: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }}
+        .report-container {{ position: relative; width: 100%; max-width: 1000px; text-align: center; }}
+        svg {{ max-width: 100%; height: auto; max-height: 680px; }}
+        
+        /* Sağ Alt Köşedeki Dinamik Lejant Kutusu */
+        .legend-box {{
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(241, 242, 246, 0.95);
+            padding: 12px 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            text-align: left;
+            font-size: 12px;
+            font-weight: 600;
+            color: #2c3e50;
+            border: 1px solid #ced6e0;
+        }}
+        .legend-item {{ display: flex; align-items: center; margin-bottom: 8px; }}
+        .legend-item:last-child {{ margin-bottom: 0; }}
+        .color-box {{ width: 16px; height: 16px; margin-right: 10px; border: 1px solid #7f8c8d; border-radius: 3px; }}
     </style>
-    <div class="svg-container">
+    <div class="report-container">
         {svg_string}
+        <div class="legend-box">
+            <div class="legend-item"><div class="color-box" style="background: #ffffff;"></div> İMALAT YOK</div>
+            <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> %0 (BAŞLANMADI)</div>
+            <div class="legend-item">
+                <div class="color-box" style="background: linear-gradient(to top, #7bed9f 50%, #ffffff 50%);"></div>
+                %25-%75 (DEVAM EDİYOR)
+            </div>
+            <div class="legend-item"><div class="color-box" style="background: #009432;"></div> %100 (TAMAMLANDI)</div>
+        </div>
     </div>
     """
-    # Güvenli render için iframe kullanıldı
-    st.components.v1.html(html_content, height=750)
+    st.components.v1.html(html_content, height=730)
 
 # --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ ---
 def auto_assign_svg_ids(file_path):
@@ -211,16 +243,6 @@ with st.sidebar:
 tab1, tab2 = st.tabs(["📊 Canlı Vaziyet Raporu", "⚙️ Sistem Ayarları (SVG)"])
 
 with tab1:
-    st.markdown("""
-    <div style='background-color: #f1f2f6; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold;'>
-        <span style='margin-right: 20px;'>⬛ İMALAT YOK</span>
-        <span style='margin-right: 20px;'>🟥 %0 (BAŞLANMADI)</span>
-        <span style='margin-right: 20px;'>🟩⬜ %25-%75 (DEVAM EDİYOR)</span>
-        <span>🟩 %100 (TAMAMLANDI)</span>
-    </div>
-    <br>
-    """, unsafe_allow_html=True)
-    
     parsel_bloklari = df_blok[(df_blok["Parsel Adı"] == secilen_parsel)]["Blok Adı"].unique()
     df_log_all = load_logs()
     rap_svg_path = f"{secilen_parsel} Parsel.svg"
@@ -245,24 +267,26 @@ with tab1:
             
             for b, val in blok_degerleri.items():
                 if val == "YOK":
-                    styles += f"#{b} {{ fill: #2c3e50 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    # Beyaz Dolgu
+                    styles += f"#{b} {{ fill: #ffffff !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
                     styles += f"#{b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%100":
-                    styles += f"#{b} {{ fill: #2ed573 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    # Koyu Yeşil
+                    styles += f"#{b} {{ fill: #009432 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 else: 
                     num_val = int(val.replace('%', ''))
                     grad_id = f"grad_{b}_{num_val}"
-                    defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#2ed573" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
+                    # Açık Yeşil Geçişli
+                    defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#7bed9f" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
                     styles += f"#{b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
             
             defs += "</defs>\n"
             styles += "</style>\n"
             
-            # Etiketleri yerleştir
             modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, base_svg, count=1, flags=re.IGNORECASE)
             
-            st.markdown(f"<h4 style='text-align: center; color: #57606f;'>{secilen_yuklenici} &nbsp;|&nbsp; {secilen_proje} &nbsp;|&nbsp; {secilen_parsel} PARSEL</h4>", unsafe_allow_html=True)
+            st.markdown(f"<h4 style='text-align: center; color: #57606f; margin-top: 10px;'>{secilen_yuklenici} &nbsp;|&nbsp; {secilen_proje} &nbsp;|&nbsp; {secilen_parsel} PARSEL</h4>", unsafe_allow_html=True)
             st.markdown(f"<h2 style='text-align: center; margin-top: -10px;'>{imalat_adi}</h2>", unsafe_allow_html=True)
             st.markdown(f"<h5 style='text-align: center; color: #747d8c; margin-top: -15px;'>{kirilim_adi} - <i>{mahal}</i></h5>", unsafe_allow_html=True)
             
