@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import re
+import math
 from datetime import datetime
 from bs4 import BeautifulSoup
 
@@ -48,12 +49,9 @@ VAL_MAP = {"YOK": -1, "%0": 0, "%25": 25, "%50": 50, "%75": 75, "%100": 100}
 
 # --- RESPONSIVE SVG RENDER FONKSİYONU ---
 def render_responsive_svg(svg_string):
-    """SVG'nin içindeki hardcoded boyutları temizleyip ekrana tam sığmasını sağlar."""
-    # Sabit width ve height değerlerini temizle
     svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
     svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
     
-    # CSS Style ile %100 genişlik ve otomatik yükseklik ver
     if 'style="' in svg_string:
         svg_string = re.sub(r'(<svg[^>]*)style="([^"]*)"', r'\1style="\2; width:100%; height:auto; max-height: 75vh;"', svg_string, flags=re.IGNORECASE)
     else:
@@ -61,7 +59,7 @@ def render_responsive_svg(svg_string):
     
     st.markdown(f'<div style="text-align:center; padding: 20px;">{svg_string}</div>', unsafe_allow_html=True)
 
-# --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ (Ayarlar için) ---
+# --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ ---
 def auto_assign_svg_ids(file_path):
     def extract_coordinates(shape_tag):
         coords = []
@@ -70,7 +68,6 @@ def auto_assign_svg_ids(file_path):
             coords = [float(p) for p in pts if p.strip().replace('.','',1).replace('-','',1).isdigit()]
         elif shape_tag.name == 'path':
             d = shape_tag.get('d', '')
-            import re
             coords = [float(p) for p in re.findall(r'-?\d+\.?\d*', d)]
         if not coords or len(coords) < 2: return None
         x_coords = coords[0::2]
@@ -92,7 +89,6 @@ def auto_assign_svg_ids(file_path):
         transform = t.get('transform') or (t.parent.get('transform') if t.parent else "")
         x, y = None, None
         if 'translate' in transform:
-            import re
             m = re.search(r'translate\(\s*(-?\d+\.?\d*)\s+(-?\d+\.?\d*)\s*\)', transform)
             if m:
                 x, y = float(m.group(1)), float(m.group(2))
@@ -104,7 +100,6 @@ def auto_assign_svg_ids(file_path):
     if not text_data: return False, "Metin bulunamadı."
 
     shapes = soup.find_all(['path', 'polygon', 'polyline'])
-    import math
     shape_data = [{'tag': s, 'cx': extract_coordinates(s)[0], 'cy': extract_coordinates(s)[1]} for s in shapes if extract_coordinates(s)]
             
     eslesenler = []
@@ -123,38 +118,53 @@ def auto_assign_svg_ids(file_path):
 
 
 # ==========================================
+# ARAYÜZ YARDIMCI FONKSİYONLARI (Yatay Tasarım)
+# ==========================================
+def draw_info_row(label, options):
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        st.markdown(f"<div style='margin-top:6px; font-weight:600; font-size:13px; color:#2c3e50;'>{label}</div>", unsafe_allow_html=True)
+    with col2:
+        return st.selectbox(label, options, label_visibility="collapsed")
+
+def draw_progress_row(label, options, default_idx):
+    col1, col2 = st.columns([5, 4])
+    with col1:
+        st.markdown(f"<div style='margin-top:6px; text-align:right; font-size:13px; color:#7f8c8d; font-style:italic;'>{label}</div>", unsafe_allow_html=True)
+    with col2:
+        return st.selectbox(label, options, index=default_idx, label_visibility="collapsed")
+
+# ==========================================
 # YAN PANEL (SIDEBAR) - VERİ GİRİŞ EKRANI
 # ==========================================
 with st.sidebar:
-    st.header("📋 PROJE BİLGİLERİ")
+    st.markdown("### 📋 PROJE BİLGİLERİ")
     
     yukleniciler = df_blok["Yüklenici Firma"].unique()
-    secilen_yuklenici = st.selectbox("YÜKLENİCİ", yukleniciler)
+    secilen_yuklenici = draw_info_row("YÜKLENİCİ", yukleniciler)
     
     projeler = df_blok[df_blok["Yüklenici Firma"] == secilen_yuklenici]["Proje Adı"].unique()
-    secilen_proje = st.selectbox("PROJE", projeler)
+    secilen_proje = draw_info_row("PROJE", projeler)
     
     parseller = df_blok[(df_blok["Yüklenici Firma"] == secilen_yuklenici) & (df_blok["Proje Adı"] == secilen_proje)]["Parsel Adı"].unique()
-    secilen_parsel = st.selectbox("PARSEL", parseller)
+    secilen_parsel = draw_info_row("PARSEL", parseller)
     
     bloklar = df_blok[(df_blok["Yüklenici Firma"] == secilen_yuklenici) & 
                       (df_blok["Proje Adı"] == secilen_proje) & 
                       (df_blok["Parsel Adı"] == secilen_parsel)]["Blok Adı"].unique()
-    secilen_blok = st.selectbox("BLOK", ["Lütfen Seçiniz..."] + list(bloklar))
+    secilen_blok = draw_info_row("BLOK", ["Lütfen Seçiniz..."] + list(bloklar))
     
-    st.divider()
+    st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
 
     if secilen_blok != "Lütfen Seçiniz...":
-        st.header(f"🛠️ İLERLEME ORANLARI ({secilen_blok} BLOK)")
+        st.markdown(f"### 🛠️ İLERLEME ORANLARI ({secilen_blok} BLOK)")
         
         with st.form("veri_giris_formu"):
             giris_verileri = {}
-            
-            # Alt kırılımlara göre gruplama (Örn: DÖŞEME KAPLAMA, DUVAR KAPLAMA)
             gruplu_imalatlar = df_imalat.groupby("ALT KIRILIM")
             
             for kirilim, grup_df in gruplu_imalatlar:
-                st.markdown(f"**<u>{kirilim}</u>**", unsafe_allow_html=True)
+                st.markdown(f"<strong style='color:#2980b9;'><u>{kirilim}</u></strong>", unsafe_allow_html=True)
                 
                 for index, row in grup_df.iterrows():
                     imalat_adi = row["İMALATIN ADI"]
@@ -164,9 +174,8 @@ with st.sidebar:
                     
                     giris_verileri[imalat_adi] = {
                         "old": son_deger,
-                        "new": st.selectbox(f"{imalat_adi}", options, index=default_idx, label_visibility="collapsed")
+                        "new": draw_progress_row(imalat_adi, options, default_idx)
                     }
-                    st.caption(f"↳ *{imalat_adi}*") # İmalat adını küçük ve şık şekilde altın yazar
             
             st.markdown("<br>", unsafe_allow_html=True)
             kaydet = st.form_submit_button("💾 VERİLERİ KAYDET", use_container_width=True)
@@ -185,10 +194,9 @@ with st.sidebar:
                             save_log(secilen_yuklenici, secilen_proje, secilen_parsel, secilen_blok, imalat, veriler["new"])
                             degisildi_mi = True
                     if degisildi_mi:
-                        st.success("Kayıt Başarılı! Sağdaki rapor güncellendi.")
+                        st.success("Kayıt Başarılı! Rapor güncellendi.")
                     else:
                         st.info("Değişiklik yapılmadı.")
-
 
 # ==========================================
 # ANA EKRAN (MAIN) - CANLI YÖNETİCİ RAPORU
@@ -196,7 +204,6 @@ with st.sidebar:
 tab1, tab2 = st.tabs(["📊 Canlı Vaziyet Raporu", "⚙️ Sistem Ayarları (SVG)"])
 
 with tab1:
-    # Lejant Alanı
     st.markdown("""
     <div style='background-color: #f1f2f6; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold;'>
         <span style='margin-right: 20px;'>⬛ İMALAT YOK</span>
@@ -230,11 +237,11 @@ with tab1:
             styles = "<style>\n"
             for b, val in blok_degerleri.items():
                 if val == "YOK":
-                    styles += f"#{b} {{ fill: #2c3e50 !important; stroke: #000000 !important; stroke-width: 3px; }}\n" # Siyah/Koyu Gri
+                    styles += f"#{b} {{ fill: #2c3e50 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
-                    styles += f"#{b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n" # Kırmızı
+                    styles += f"#{b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%100":
-                    styles += f"#{b} {{ fill: #2ed573 !important; stroke: #000000 !important; stroke-width: 3px; }}\n" # Yeşil
+                    styles += f"#{b} {{ fill: #2ed573 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 else: 
                     num_val = int(val.replace('%', ''))
                     grad_id = f"grad_{b}_{num_val}"
@@ -244,14 +251,11 @@ with tab1:
             defs += "</defs>\n</style>\n"
             modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, base_svg, count=1, flags=re.IGNORECASE)
             
-            # Dinamik Rapor Başlıkları
             st.markdown(f"<h4 style='text-align: center; color: #57606f;'>{secilen_yuklenici} &nbsp;|&nbsp; {secilen_proje} &nbsp;|&nbsp; {secilen_parsel} PARSEL</h4>", unsafe_allow_html=True)
             st.markdown(f"<h2 style='text-align: center; margin-top: -10px;'>{imalat_adi}</h2>", unsafe_allow_html=True)
             st.markdown(f"<h5 style='text-align: center; color: #747d8c; margin-top: -15px;'>{kirilim_adi} - <i>{mahal}</i></h5>", unsafe_allow_html=True)
             
-            # Tam Ekrana Oturan SVG Çizimi
             render_responsive_svg(modified_svg)
-            
             st.markdown("<hr style='border: 2px solid #dfe4ea;'>", unsafe_allow_html=True)
     else:
         st.info("👈 Soldaki panelden seçim yapabilirsiniz. İlgili parselin görseli yüklendiğinde burada renklendirilmiş raporlar listelenecektir.")
@@ -268,6 +272,7 @@ with tab2:
             basarili, mesaj = auto_assign_svg_ids(secilen_svg)
             if basarili:
                 st.success(mesaj)
+                st.balloons()
             else:
                 st.error(mesaj)
     else:
