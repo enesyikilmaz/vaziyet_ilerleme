@@ -49,15 +49,22 @@ VAL_MAP = {"YOK": -1, "%0": 0, "%25": 25, "%50": 50, "%75": 75, "%100": 100}
 
 # --- RESPONSIVE SVG RENDER FONKSİYONU ---
 def render_responsive_svg(svg_string):
+    # Sabit genişlik ve yükseklikleri temizle ki CSS devralabilsin
     svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
     svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
     
-    if 'style="' in svg_string:
-        svg_string = re.sub(r'(<svg[^>]*)style="([^"]*)"', r'\1style="\2; width:100%; height:auto; max-height: 75vh;"', svg_string, flags=re.IGNORECASE)
-    else:
-        svg_string = re.sub(r'(<svg[^>]*)', r'\1 style="width:100%; height:auto; max-height: 75vh;"', svg_string, count=1, flags=re.IGNORECASE)
-    
-    st.markdown(f'<div style="text-align:center; padding: 20px;">{svg_string}</div>', unsafe_allow_html=True)
+    html_content = f"""
+    <style>
+        body {{ margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; background-color: transparent; }}
+        .svg-container {{ width: 100%; text-align: center; }}
+        svg {{ max-width: 100%; height: auto; max-height: 700px; }}
+    </style>
+    <div class="svg-container">
+        {svg_string}
+    </div>
+    """
+    # Güvenli render için iframe kullanıldı
+    st.components.v1.html(html_content, height=750)
 
 # --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ ---
 def auto_assign_svg_ids(file_path):
@@ -114,11 +121,11 @@ def auto_assign_svg_ids(file_path):
             
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(str(soup))
-    return True, f"{len(eslesenler)} adet bloğa ID atandı: {', '.join(eslesenler)}"
+    return True, f"{len(eslesenler)} adet bloğa başarıyla ID atandı: {', '.join(eslesenler)}"
 
 
 # ==========================================
-# ARAYÜZ YARDIMCI FONKSİYONLARI (Yatay Tasarım)
+# ARAYÜZ YARDIMCI FONKSİYONLARI
 # ==========================================
 def draw_info_row(label, options):
     col1, col2 = st.columns([2, 3])
@@ -135,7 +142,7 @@ def draw_progress_row(label, options, default_idx):
         return st.selectbox(label, options, index=default_idx, label_visibility="collapsed")
 
 # ==========================================
-# YAN PANEL (SIDEBAR) - VERİ GİRİŞ EKRANI
+# YAN PANEL (SIDEBAR)
 # ==========================================
 with st.sidebar:
     st.markdown("### 📋 PROJE BİLGİLERİ")
@@ -199,7 +206,7 @@ with st.sidebar:
                         st.info("Değişiklik yapılmadı.")
 
 # ==========================================
-# ANA EKRAN (MAIN) - CANLI YÖNETİCİ RAPORU
+# ANA EKRAN (MAIN) - RAPOR
 # ==========================================
 tab1, tab2 = st.tabs(["📊 Canlı Vaziyet Raporu", "⚙️ Sistem Ayarları (SVG)"])
 
@@ -234,7 +241,8 @@ with tab1:
                 blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
             defs = "<defs>\n"
-            styles = "<style>\n"
+            styles = "<style type='text/css'>\n"
+            
             for b, val in blok_degerleri.items():
                 if val == "YOK":
                     styles += f"#{b} {{ fill: #2c3e50 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
@@ -248,7 +256,10 @@ with tab1:
                     defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#2ed573" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
                     styles += f"#{b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
             
-            defs += "</defs>\n</style>\n"
+            defs += "</defs>\n"
+            styles += "</style>\n"
+            
+            # Etiketleri yerleştir
             modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, base_svg, count=1, flags=re.IGNORECASE)
             
             st.markdown(f"<h4 style='text-align: center; color: #57606f;'>{secilen_yuklenici} &nbsp;|&nbsp; {secilen_proje} &nbsp;|&nbsp; {secilen_parsel} PARSEL</h4>", unsafe_allow_html=True)
@@ -272,7 +283,6 @@ with tab2:
             basarili, mesaj = auto_assign_svg_ids(secilen_svg)
             if basarili:
                 st.success(mesaj)
-                st.balloons()
             else:
                 st.error(mesaj)
     else:
