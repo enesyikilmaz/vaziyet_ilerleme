@@ -14,6 +14,9 @@ st.set_page_config(page_title="Şantiye İlerleme Takip", layout="wide", page_ic
 def load_master_data():
     df_blok = pd.read_excel("Blok İsimleri.xlsx")
     df_imalat = pd.read_excel("İmalat İsimleri.xlsx")
+    # Veri tiplerini güvenliğe almak için String'e çeviriyoruz
+    df_blok["Parsel Adı"] = df_blok["Parsel Adı"].astype(str)
+    df_blok["Blok Adı"] = df_blok["Blok Adı"].astype(str)
     return df_blok, df_imalat
 
 try:
@@ -29,17 +32,21 @@ if not os.path.exists(LOG_FILE):
     df_log.to_csv(LOG_FILE, index=False)
 
 def load_logs():
-    return pd.read_csv(LOG_FILE)
+    df = pd.read_csv(LOG_FILE)
+    # Log dosyasındaki arama sütunlarını kesin String yapıyoruz (Type Mismatch önleme)
+    df["Parsel"] = df["Parsel"].astype(str)
+    df["Blok"] = df["Blok"].astype(str)
+    return df
 
 def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    df = pd.DataFrame([[now, yuklenici, proje, parsel, blok, imalat, ilerleme]], 
+    df = pd.DataFrame([[now, yuklenici, proje, str(parsel), str(blok), imalat, ilerleme]], 
                       columns=["Tarih", "Yüklenici", "Proje", "Parsel", "Blok", "İmalat", "İlerleme"])
     df.to_csv(LOG_FILE, mode='a', header=False, index=False)
 
 def get_latest_progress(parsel, blok, imalat):
     df_log = load_logs()
-    mask = (df_log["Parsel"] == int(parsel)) & (df_log["Blok"] == str(blok)) & (df_log["İmalat"] == imalat)
+    mask = (df_log["Parsel"] == str(parsel)) & (df_log["Blok"] == str(blok)) & (df_log["İmalat"] == imalat)
     filtered = df_log[mask]
     if not filtered.empty:
         return filtered.iloc[-1]["İlerleme"]
@@ -187,7 +194,7 @@ with st.sidebar:
                         st.info("Değişiklik yapılmadı.")
 
 # ==========================================
-# ANA EKRAN (MAIN) - RAPOR
+# ANA EKRAN (MAIN) - RAPOR & PDF
 # ==========================================
 tab1, tab2 = st.tabs(["📊 Canlı Vaziyet Raporu", "⚙️ Sistem Ayarları (SVG)"])
 
@@ -227,26 +234,14 @@ with tab1:
             .legend-item:last-child { margin-bottom: 0; }
             .color-box { width: 16px; height: 16px; margin-right: 10px; border: 1px solid #7f8c8d; border-radius: 3px; }
 
-            /* BOŞ SAYFA ENGELLEYİCİ KUSURSUZ YAZDIRMA AYARLARI */
             @media print {
                 @page { margin: 0; size: auto; }
                 body { padding: 0; background-color: #ffffff; -webkit-print-color-adjust: exact; }
                 .action-bar { display: none !important; }
                 
-                /* Her bir sayfayı esnemez bir kutuya hapsediyoruz */
                 .page-container { 
-                    box-shadow: none; 
-                    border-radius: 0; 
-                    padding: 0; 
-                    margin: 0; 
-                    width: 100vw; 
-                    height: 100vh; /* Tam 1 sayfa yüksekliği */
-                    page-break-after: always; 
-                    page-break-inside: avoid;
-                    display: block; /* Flex'in yazdırma buglarını engeller */
-                    position: relative;
-                    box-sizing: border-box;
-                    padding-top: 15mm;
+                    box-shadow: none; border-radius: 0; padding: 0; margin: 0; width: 100vw; height: 100vh;
+                    page-break-after: always; page-break-inside: avoid; display: block; position: relative; box-sizing: border-box; padding-top: 15mm;
                 }
                 .page-container:last-child { page-break-after: avoid; }
                 
@@ -269,7 +264,8 @@ with tab1:
             
             blok_degerleri = {}
             for b in parsel_bloklari:
-                mask = (df_log_all["Parsel"] == secilen_parsel) & (df_log_all["Blok"] == str(b)) & (df_log_all["İmalat"] == imalat_adi)
+                # Type safe mask!
+                mask = (df_log_all["Parsel"] == str(secilen_parsel)) & (df_log_all["Blok"] == str(b)) & (df_log_all["İmalat"] == imalat_adi)
                 filt = df_log_all[mask]
                 blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
@@ -320,7 +316,6 @@ with tab1:
             """
 
         full_html += "</body></html>"
-        
         st.components.v1.html(full_html, height=850, scrolling=True)
         
     else:
