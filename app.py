@@ -9,14 +9,15 @@ from bs4 import BeautifulSoup
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Şantiye İlerleme Takip", layout="wide", page_icon="🏗️", initial_sidebar_state="expanded")
 
-# --- VERİ OKUMA ---
+# --- VERİ OKUMA VE TEMİZLEME (DATA CLEANING) ---
 @st.cache_data
 def load_master_data():
     df_blok = pd.read_excel("Blok İsimleri.xlsx")
     df_imalat = pd.read_excel("İmalat İsimleri.xlsx")
-    # Veri tiplerini güvenliğe almak için String'e çeviriyoruz
-    df_blok["Parsel Adı"] = df_blok["Parsel Adı"].astype(str)
-    df_blok["Blok Adı"] = df_blok["Blok Adı"].astype(str)
+    
+    # 8 ve 8.0 uyuşmazlıklarını (Type Mismatch) engellemek için kesin metne çevirme ve .0 silme
+    df_blok["Parsel Adı"] = df_blok["Parsel Adı"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    df_blok["Blok Adı"] = df_blok["Blok Adı"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     return df_blok, df_imalat
 
 try:
@@ -33,20 +34,26 @@ if not os.path.exists(LOG_FILE):
 
 def load_logs():
     df = pd.read_csv(LOG_FILE)
-    # Log dosyasındaki arama sütunlarını kesin String yapıyoruz (Type Mismatch önleme)
-    df["Parsel"] = df["Parsel"].astype(str)
-    df["Blok"] = df["Blok"].astype(str)
+    # Log okurken de .0 temizliği yapıyoruz
+    df["Parsel"] = df["Parsel"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    df["Blok"] = df["Blok"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
 def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    df = pd.DataFrame([[now, yuklenici, proje, str(parsel), str(blok), imalat, ilerleme]], 
+    p_str = str(parsel).replace('.0', '').strip()
+    b_str = str(blok).replace('.0', '').strip()
+    
+    df = pd.DataFrame([[now, yuklenici, proje, p_str, b_str, imalat, ilerleme]], 
                       columns=["Tarih", "Yüklenici", "Proje", "Parsel", "Blok", "İmalat", "İlerleme"])
     df.to_csv(LOG_FILE, mode='a', header=False, index=False)
 
 def get_latest_progress(parsel, blok, imalat):
     df_log = load_logs()
-    mask = (df_log["Parsel"] == str(parsel)) & (df_log["Blok"] == str(blok)) & (df_log["İmalat"] == imalat)
+    p_str = str(parsel).replace('.0', '').strip()
+    b_str = str(blok).replace('.0', '').strip()
+    
+    mask = (df_log["Parsel"] == p_str) & (df_log["Blok"] == b_str) & (df_log["İmalat"] == imalat)
     filtered = df_log[mask]
     if not filtered.empty:
         return filtered.iloc[-1]["İlerleme"]
@@ -238,13 +245,8 @@ with tab1:
                 @page { margin: 0; size: auto; }
                 body { padding: 0; background-color: #ffffff; -webkit-print-color-adjust: exact; }
                 .action-bar { display: none !important; }
-                
-                .page-container { 
-                    box-shadow: none; border-radius: 0; padding: 0; margin: 0; width: 100vw; height: 100vh;
-                    page-break-after: always; page-break-inside: avoid; display: block; position: relative; box-sizing: border-box; padding-top: 15mm;
-                }
+                .page-container { box-shadow: none; border-radius: 0; padding: 0; margin: 0; width: 100vw; height: 100vh; page-break-after: always; page-break-inside: avoid; display: block; position: relative; box-sizing: border-box; padding-top: 15mm; }
                 .page-container:last-child { page-break-after: avoid; }
-                
                 .svg-wrapper { margin-top: 10mm; }
                 .svg-wrapper svg { max-height: 70vh !important; }
                 .legend-box { bottom: 15mm; right: 15mm; box-shadow: none; border: 1px solid #000; }
@@ -262,36 +264,50 @@ with tab1:
             kirilim_adi = row["ALT KIRILIM"]
             mahal = row["BULUNDUĞU MAHAL"]
             
+            # CSS sızmasını önlemek için Benzersiz ID (Unique ID)
+            uid = f"svg_vaziyet_{index}"
+            
             blok_degerleri = {}
             for b in parsel_bloklari:
-                # Type safe mask!
-                mask = (df_log_all["Parsel"] == str(secilen_parsel)) & (df_log_all["Blok"] == str(b)) & (df_log_all["İmalat"] == imalat_adi)
+                # Kesin eşleştirme için .str() kontrolleri
+                mask = (df_log_all["Parsel"] == str(secilen_parsel).replace('.0', '').strip()) & \
+                       (df_log_all["Blok"] == str(b).replace('.0', '').strip()) & \
+                       (df_log_all["İmalat"] == imalat_adi)
                 filt = df_log_all[mask]
                 blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
+            # Ana SVG'den sabit boyutları atıyoruz
             svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', base_svg, flags=re.IGNORECASE)
             svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
+            
+            modified_svg = svg_string
+            
+            # Her bloğun ID'sini bu sekmeye özel yapıyoruz (Örn: A -> A_svg_vaziyet_0)
+            for b in parsel_bloklari:
+                modified_svg = re.sub(rf'id="{re.escape(b)}"', f'id="{b}_{uid}"', modified_svg)
             
             defs = "<defs>\n"
             styles = "<style type='text/css'>\n"
             
             for b, val in blok_degerleri.items():
+                unique_b = f"{b}_{uid}" # Stilleri bu yeni benzersiz ID'lere atıyoruz
                 if val == "YOK":
-                    styles += f"#{b} {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    styles += f"#{unique_b} {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
-                    styles += f"#{b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    styles += f"#{unique_b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%100":
-                    styles += f"#{b} {{ fill: #009432 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    styles += f"#{unique_b} {{ fill: #009432 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 else: 
-                    num_val = int(val.replace('%', ''))
-                    grad_id = f"grad_{b}_{num_val}"
+                    num_val = int(str(val).replace('%', ''))
+                    grad_id = f"grad_{unique_b}_{num_val}"
                     defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#7bed9f" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
-                    styles += f"#{b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    styles += f"#{unique_b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
             
             defs += "</defs>\n"
             styles += "</style>\n"
             
-            modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, svg_string, count=1, flags=re.IGNORECASE)
+            # Stilleri ve gradientleri SVG'nin içine göm
+            modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, modified_svg, count=1, flags=re.IGNORECASE)
             
             full_html += f"""
             <div class="page-container">
