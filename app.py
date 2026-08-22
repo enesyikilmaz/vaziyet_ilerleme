@@ -23,8 +23,14 @@ except Exception as e:
     st.error("Veritabanı bağlantı hatası. Secrets ayarlarınızı kontrol edin.")
     st.stop()
 
+# --- OTURUM YÖNETİMİ (SESSION) ---
+# Eğer oturum değişkeni yoksa güvenli bir şekilde oluştur
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+
 # --- GİRİŞ EKRANI (LOGIN) ---
-if st.session_state["user"] is None:
+# KeyError almamak için .get() ile güvenli kontrol yapıyoruz
+if st.session_state.get("user") is None:
     st.markdown("<h2 style='text-align: center; color: #2c3e50; margin-top: 50px;'>🔐 Şantiye Yönetim Paneli</h2>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -46,9 +52,9 @@ if st.session_state["user"] is None:
                     else:
                         st.error("Hatalı e-posta veya şifre!")
                 except Exception as e:
-                    # Eğer veritabanı kaynaklı bir API hatası olursa ekrana düzgünce yazdır
-                    st.error(f"Veritabanı bağlantı hatası: {e}")
-    st.stop() # Kullanıcı giriş yapmadıysa uygulamanın geri kalanını çalıştırma
+                    # Veritabanı izin hatası vb. durumlarda detaylı hata mesajı
+                    st.error(f"Veritabanı erişim hatası: {e}")
+    st.stop() # Kullanıcı giriş yapmadıysa uygulamanın geri kalanını ASLA çalıştırma
 
 # ==========================================
 # GİRİŞ YAPILDIKTAN SONRAKİ ANA UYGULAMA
@@ -223,7 +229,7 @@ def draw_progress_row(label, options, default_idx):
 # YAN PANEL (SIDEBAR)
 # ==========================================
 with st.sidebar:
-    st.success(f"👤 Hoş geldiniz, {st.session_state['user']['ad_soyad']}")
+    st.success(f"👤 Hoş geldiniz, {st.session_state['user'].get('ad_soyad', 'Kullanıcı')}")
     if st.button("Çıkış Yap", use_container_width=True):
         st.session_state["user"] = None
         st.rerun()
