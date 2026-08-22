@@ -46,7 +46,7 @@ if st.session_state.get("user") is None:
             
             if submit:
                 try:
-                    res = supabase.table("kullanicilar").select("*").eq("email", email.strip()).eq("sifre", sifre).execute()
+                    res = supabase.table("kullanicilar").select("*").eq("email", email.strip().lower()).eq("sifre", sifre.strip()).execute()
                     
                     if len(res.data) > 0:
                         st.session_state["user"] = res.data[0]
