@@ -10,10 +10,9 @@ from supabase import create_client, Client
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Şantiye İlerleme Takip", layout="wide", page_icon="🏗️", initial_sidebar_state="expanded")
 
-# --- SUPABASE BAĞLANTISI VE KESİN TEMİZLİK ---
+# --- SUPABASE BAĞLANTISI ---
 @st.cache_resource
 def init_connection():
-    # Kopyalama sırasında şifrenin İÇİNE sızan tüm Enter (\n) ve boşlukları söküp atıyoruz
     raw_url = st.secrets["SUPABASE_URL"]
     raw_key = st.secrets["SUPABASE_KEY"]
     
@@ -28,7 +27,7 @@ except Exception as e:
     st.error("Veritabanı bağlantı hatası. Secrets ayarlarınızı kontrol edin.")
     st.stop()
 
-# --- OTURUM YÖNETİMİ (SESSION) ---
+# --- OTURUM YÖNETİMİ ---
 if "user" not in st.session_state:
     st.session_state["user"] = None
 
@@ -46,7 +45,7 @@ if st.session_state.get("user") is None:
             
             if submit:
                 try:
-                    res = supabase.table("kullanicilar").select("*").eq("email", email.strip().lower()).eq("sifre", sifre.strip()).execute()
+                    res = supabase.table("kullanicilar").select("*").eq("email", email.strip().lower()).eq("sifre", sifre).execute()
                     
                     if len(res.data) > 0:
                         st.session_state["user"] = res.data[0]
@@ -58,7 +57,7 @@ if st.session_state.get("user") is None:
     st.stop()
 
 # ==========================================
-# GİRİŞ YAPILDIKTAN SONRAKİ ANA UYGULAMA
+# ANA UYGULAMA (GİRİŞ YAPILDIKTAN SONRA)
 # ==========================================
 
 # --- VERİ OKUMA VE TEMİZLEME ---
@@ -76,8 +75,8 @@ except Exception as e:
     st.error(f"Excel dosyaları okunamadı: {e}")
     st.stop()
 
-# --- VERİTABANI İŞLEMLERİ (SUPABASE) ---
-def load_logs():
+# --- MERKEZİ VERİ ÇEKİMİ (PERFORMANS İÇİN 1 KERE ÇEKİLİR) ---
+def fetch_all_logs():
     res = supabase.table("ilerleme_loglari").select("*").execute()
     df = pd.DataFrame(res.data)
     if df.empty:
@@ -91,6 +90,9 @@ def load_logs():
     df["Blok"] = df["Blok"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
+# N+1 Problemini çözmek için logları sayfa başında SADECE BİR KERE alıyoruz
+df_log_all = fetch_all_logs()
+
 def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
     p_str = str(parsel).replace('.0', '').strip()
     b_str = str(blok).replace('.0', '').strip()
@@ -103,54 +105,17 @@ def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
     supabase.table("ilerleme_loglari").insert(veri).execute()
 
 def get_latest_progress(parsel, blok, imalat):
-    df_log = load_logs()
-    if df_log.empty: return "YOK"
+    if df_log_all.empty: return "YOK"
     p_str = str(parsel).replace('.0', '').strip()
     b_str = str(blok).replace('.0', '').strip()
     
-    mask = (df_log["Parsel"] == p_str) & (df_log["Blok"] == b_str) & (df_log["İmalat"] == imalat)
-    filtered = df_log[mask]
+    mask = (df_log_all["Parsel"] == p_str) & (df_log_all["Blok"] == b_str) & (df_log_all["İmalat"] == imalat)
+    filtered = df_log_all[mask]
     if not filtered.empty:
         return filtered.iloc[-1]["İlerleme"]
     return "YOK"
 
 VAL_MAP = {"YOK": -1, "%0": 0, "%25": 25, "%50": 50, "%75": 75, "%100": 100}
-
-# --- RESPONSIVE SVG RENDER FONKSİYONU ---
-def render_responsive_svg(svg_string):
-    svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
-    svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
-    
-    if 'style="' in svg_string:
-        svg_string = re.sub(r'(<svg[^>]*)style="([^"]*)"', r'\1style="\2; width:100%; height:auto; max-height: 680px;"', svg_string, flags=re.IGNORECASE)
-    else:
-        svg_string = re.sub(r'(<svg[^>]*)', r'\1 style="width:100%; height:auto; max-height: 680px;"', svg_string, count=1, flags=re.IGNORECASE)
-    
-    html_content = f"""
-    <style>
-        body {{ margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; background-color: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }}
-        .report-container {{ position: relative; width: 100%; max-width: 1000px; text-align: center; }}
-        svg {{ max-width: 100%; height: auto; max-height: 680px; }}
-        
-        .legend-box {{ position: absolute; bottom: 20px; right: 20px; background: rgba(241, 242, 246, 0.95); padding: 12px 15px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); text-align: left; font-size: 12px; font-weight: 600; color: #2c3e50; border: 1px solid #ced6e0; }}
-        .legend-item {{ display: flex; align-items: center; margin-bottom: 8px; }}
-        .legend-item:last-child {{ margin-bottom: 0; }}
-        .color-box {{ width: 16px; height: 16px; margin-right: 10px; border: 1px solid #7f8c8d; border-radius: 3px; }}
-    </style>
-    <div class="report-container">
-        {svg_string}
-        <div class="legend-box">
-            <div class="legend-item"><div class="color-box" style="background: #d9d9d9;"></div> İMALAT YOK</div>
-            <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> BAŞLANMADI</div>
-            <div class="legend-item">
-                <div class="color-box" style="background: linear-gradient(to top, #7bed9f 50%, #ffffff 50%);"></div>
-                DEVAM EDİYOR
-            </div>
-            <div class="legend-item"><div class="color-box" style="background: #009432;"></div> TAMAMLANDI</div>
-        </div>
-    </div>
-    """
-    st.components.v1.html(html_content, height=730)
 
 # --- SVG OTOMATİK ID EŞLEŞTİRME MODÜLÜ ---
 def auto_assign_svg_ids(file_path):
@@ -289,6 +254,8 @@ with st.sidebar:
                             degisildi_mi = True
                     if degisildi_mi:
                         st.success("Kayıt Başarılı! Rapor güncellendi.")
+                        # Yeni logun anında görünmesi için sayfayı yeniletiyoruz
+                        st.rerun()
                     else:
                         st.info("Değişiklik yapılmadı.")
 
@@ -299,7 +266,6 @@ tab1, tab2 = st.tabs(["📊 Canlı Vaziyet Raporu", "⚙️ Sistem Ayarları (SV
 
 with tab1:
     parsel_bloklari = df_blok[(df_blok["Parsel Adı"] == secilen_parsel)]["Blok Adı"].unique()
-    df_log_all = load_logs()
     rap_svg_path = f"{secilen_parsel} Parsel.svg"
     
     if os.path.exists(rap_svg_path):
@@ -343,6 +309,10 @@ with tab1:
             <div class="action-bar"><button class="print-btn" onclick="window.print()">🖨️ PDF OLARAK İNDİR</button></div>
         """
         
+        # SVG'nin genişlik yükseklik değerlerini dışarıda SADECE 1 KERE siliyoruz
+        base_svg_clean = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', base_svg, flags=re.IGNORECASE)
+        base_svg_clean = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', base_svg_clean, flags=re.IGNORECASE)
+        
         for index, row in df_imalat.iterrows():
             imalat_adi = row["İMALATIN ADI"]
             kirilim_adi = row["ALT KIRILIM"]
@@ -357,41 +327,36 @@ with tab1:
                 filt = df_log_all[mask]
                 blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
-            svg_string = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', base_svg, flags=re.IGNORECASE)
-            svg_string = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', svg_string, flags=re.IGNORECASE)
-            modified_svg = svg_string
-            
-            for b in parsel_bloklari:
-                modified_svg = re.sub(rf'id="{re.escape(b)}"', f'id="{b}_{uid}"', modified_svg)
-            
-            defs = "<defs>\n"
-            styles = "<style type='text/css'>\n"
+            # CSS SCOPING: SVG kodunu ellemek yerine CSS ile sadece bu kutunun içindekileri hedefliyoruz
+            defs_html = f"<svg width='0' height='0' style='display:none;'><defs>\n"
+            styles_html = "<style type='text/css'>\n"
             
             for b, val in blok_degerleri.items():
-                unique_b = f"{b}_{uid}"
                 if val == "YOK":
-                    styles += f"#{unique_b} {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    styles_html += f"#{uid} [id='{b}'] {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
-                    styles += f"#{unique_b} {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    styles_html += f"#{uid} [id='{b}'] {{ fill: #ff4757 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%100":
-                    styles += f"#{unique_b} {{ fill: #009432 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    styles_html += f"#{uid} [id='{b}'] {{ fill: #009432 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 else: 
                     num_val = int(str(val).replace('%', ''))
-                    grad_id = f"grad_{unique_b}_{num_val}"
-                    defs += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#7bed9f" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
-                    styles += f"#{unique_b} {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
+                    grad_id = f"grad_{uid}_{b}_{num_val}"
+                    defs_html += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#7bed9f" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
+                    styles_html += f"#{uid} [id='{b}'] {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
             
-            defs += "</defs>\n</style>\n"
-            modified_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs + styles, modified_svg, count=1, flags=re.IGNORECASE)
+            defs_html += "</defs></svg>\n"
+            styles_html += "</style>\n"
             
             full_html += f"""
-            <div class="page-container">
+            <div id="{uid}" class="page-container">
+                {defs_html}
+                {styles_html}
                 <div class="header-titles">
                     <h4>{secilen_yuklenici} | {secilen_proje} | {secilen_parsel} PARSEL</h4>
                     <h2>{imalat_adi}</h2>
                     <h5><b>{kirilim_adi}</b> - <i>{mahal}</i></h5>
                 </div>
-                <div class="svg-wrapper">{modified_svg}</div>
+                <div class="svg-wrapper">{base_svg_clean}</div>
                 <div class="legend-box">
                     <div class="legend-item"><div class="color-box" style="background: #d9d9d9;"></div> İMALAT YOK</div>
                     <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> BAŞLANMADI</div>
