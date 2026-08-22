@@ -10,12 +10,16 @@ from supabase import create_client, Client
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Şantiye İlerleme Takip", layout="wide", page_icon="🏗️", initial_sidebar_state="expanded")
 
-# --- SUPABASE BAĞLANTISI VE BOŞLUK TEMİZLİĞİ (.strip) ---
+# --- SUPABASE BAĞLANTISI VE KESİN TEMİZLİK ---
 @st.cache_resource
 def init_connection():
-    # .strip() komutu, secrets içindeki görünmez enter ve boşlukları siler
-    url = st.secrets["SUPABASE_URL"].strip()
-    key = st.secrets["SUPABASE_KEY"].strip()
+    # Kopyalama sırasında şifrenin İÇİNE sızan tüm Enter (\n) ve boşlukları söküp atıyoruz
+    raw_url = st.secrets["SUPABASE_URL"]
+    raw_key = st.secrets["SUPABASE_KEY"]
+    
+    url = raw_url.replace("\n", "").replace("\r", "").replace(" ", "").strip()
+    key = raw_key.replace("\n", "").replace("\r", "").replace(" ", "").strip()
+    
     return create_client(url, key)
 
 try:
