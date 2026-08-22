@@ -10,11 +10,12 @@ from supabase import create_client, Client
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Şantiye İlerleme Takip", layout="wide", page_icon="🏗️", initial_sidebar_state="expanded")
 
-# --- SUPABASE BAĞLANTISI ---
+# --- SUPABASE BAĞLANTISI VE BOŞLUK TEMİZLİĞİ (.strip) ---
 @st.cache_resource
 def init_connection():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
+    # .strip() komutu, secrets içindeki görünmez enter ve boşlukları siler
+    url = st.secrets["SUPABASE_URL"].strip()
+    key = st.secrets["SUPABASE_KEY"].strip()
     return create_client(url, key)
 
 try:
@@ -24,12 +25,10 @@ except Exception as e:
     st.stop()
 
 # --- OTURUM YÖNETİMİ (SESSION) ---
-# Eğer oturum değişkeni yoksa güvenli bir şekilde oluştur
 if "user" not in st.session_state:
     st.session_state["user"] = None
 
 # --- GİRİŞ EKRANI (LOGIN) ---
-# KeyError almamak için .get() ile güvenli kontrol yapıyoruz
 if st.session_state.get("user") is None:
     st.markdown("<h2 style='text-align: center; color: #2c3e50; margin-top: 50px;'>🔐 Şantiye Yönetim Paneli</h2>", unsafe_allow_html=True)
     
@@ -43,18 +42,16 @@ if st.session_state.get("user") is None:
             
             if submit:
                 try:
-                    # Supabase'den kullanıcı sorgulama
-                    res = supabase.table("kullanicilar").select("*").eq("email", email).eq("sifre", sifre).execute()
+                    res = supabase.table("kullanicilar").select("*").eq("email", email.strip()).eq("sifre", sifre).execute()
                     
                     if len(res.data) > 0:
                         st.session_state["user"] = res.data[0]
-                        st.rerun() # Başarılı girişte sayfayı yenile ve sistemi aç
+                        st.rerun() 
                     else:
                         st.error("Hatalı e-posta veya şifre!")
                 except Exception as e:
-                    # Veritabanı izin hatası vb. durumlarda detaylı hata mesajı
                     st.error(f"Veritabanı erişim hatası: {e}")
-    st.stop() # Kullanıcı giriş yapmadıysa uygulamanın geri kalanını ASLA çalıştırma
+    st.stop()
 
 # ==========================================
 # GİRİŞ YAPILDIKTAN SONRAKİ ANA UYGULAMA
@@ -82,7 +79,6 @@ def load_logs():
     if df.empty:
         return pd.DataFrame(columns=["Tarih", "Yüklenici", "Proje", "Parsel", "Blok", "İmalat", "İlerleme"])
     
-    # Supabase sütunlarını eski sisteme uyumlu hale getiriyoruz
     df = df.rename(columns={
         "tarih": "Tarih", "yuklenici": "Yüklenici", "proje": "Proje", 
         "parsel": "Parsel", "blok": "Blok", "imalat": "İmalat", "ilerleme": "İlerleme"
