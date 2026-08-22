@@ -75,7 +75,8 @@ except Exception as e:
     st.error(f"Excel dosyaları okunamadı: {e}")
     st.stop()
 
-# --- MERKEZİ VERİ ÇEKİMİ (PERFORMANS İÇİN 1 KERE ÇEKİLİR) ---
+# --- YÜKSEK PERFORMANSLI ÖNBELLEK (CACHE) SİSTEMİ ---
+@st.cache_data
 def fetch_all_logs():
     res = supabase.table("ilerleme_loglari").select("*").execute()
     df = pd.DataFrame(res.data)
@@ -90,7 +91,7 @@ def fetch_all_logs():
     df["Blok"] = df["Blok"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
-# N+1 Problemini çözmek için logları sayfa başında SADECE BİR KERE alıyoruz
+# Veritabanına sadece bir kez sorar, sonrasını saniyenin onda biri hızında RAM'den getirir
 df_log_all = fetch_all_logs()
 
 def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
@@ -104,13 +105,13 @@ def save_log(yuklenici, proje, parsel, blok, imalat, ilerleme):
     }
     supabase.table("ilerleme_loglari").insert(veri).execute()
 
-def get_latest_progress(parsel, blok, imalat):
-    if df_log_all.empty: return "YOK"
+def get_latest_progress(df_logs, parsel, blok, imalat):
+    if df_logs.empty: return "YOK"
     p_str = str(parsel).replace('.0', '').strip()
     b_str = str(blok).replace('.0', '').strip()
     
-    mask = (df_log_all["Parsel"] == p_str) & (df_log_all["Blok"] == b_str) & (df_log_all["İmalat"] == imalat)
-    filtered = df_log_all[mask]
+    mask = (df_logs["Parsel"] == p_str) & (df_logs["Blok"] == b_str) & (df_logs["İmalat"] == imalat)
+    filtered = df_logs[mask]
     if not filtered.empty:
         return filtered.iloc[-1]["İlerleme"]
     return "YOK"
@@ -227,7 +228,8 @@ with st.sidebar:
                 st.markdown(f"<strong style='color:#2980b9;'><u>{kirilim}</u></strong>", unsafe_allow_html=True)
                 for index, row in grup_df.iterrows():
                     imalat_adi = row["İMALATIN ADI"]
-                    son_deger = get_latest_progress(secilen_parsel, secilen_blok, imalat_adi)
+                    # Logları doğrudan çekmek yerine hafızadaki hızlı veriyi (df_log_all) kullanıyoruz
+                    son_deger = get_latest_progress(df_log_all, secilen_parsel, secilen_blok, imalat_adi)
                     options = list(VAL_MAP.keys())
                     default_idx = options.index(son_deger) if son_deger in options else 0
                     
@@ -254,7 +256,7 @@ with st.sidebar:
                             degisildi_mi = True
                     if degisildi_mi:
                         st.success("Kayıt Başarılı! Rapor güncellendi.")
-                        # Yeni logun anında görünmesi için sayfayı yeniletiyoruz
+                        fetch_all_logs.clear() # Sadece kayıt yapıldığında hafızayı temizle ve veritabanını tazele
                         st.rerun()
                     else:
                         st.info("Değişiklik yapılmadı.")
@@ -309,7 +311,7 @@ with tab1:
             <div class="action-bar"><button class="print-btn" onclick="window.print()">🖨️ PDF OLARAK İNDİR</button></div>
         """
         
-        # SVG'nin genişlik yükseklik değerlerini dışarıda SADECE 1 KERE siliyoruz
+        # SVG'nin genişlik/yükseklik ayarını bir kez yapıyoruz
         base_svg_clean = re.sub(r'(<svg[^>]*)width="[^"]*"', r'\1', base_svg, flags=re.IGNORECASE)
         base_svg_clean = re.sub(r'(<svg[^>]*)height="[^"]*"', r'\1', base_svg_clean, flags=re.IGNORECASE)
         
@@ -327,11 +329,12 @@ with tab1:
                 filt = df_log_all[mask]
                 blok_degerleri[b] = filt.iloc[-1]["İlerleme"] if not filt.empty else "YOK"
             
-            # CSS SCOPING: SVG kodunu ellemek yerine CSS ile sadece bu kutunun içindekileri hedefliyoruz
-            defs_html = f"<svg width='0' height='0' style='display:none;'><defs>\n"
+            defs_html = "<defs>\n"
             styles_html = "<style type='text/css'>\n"
             
             for b, val in blok_degerleri.items():
+                b_clean = str(b).replace(" ", "_")
+                
                 if val == "YOK":
                     styles_html += f"#{uid} [id='{b}'] {{ fill: #d9d9d9 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 elif val == "%0":
@@ -340,23 +343,25 @@ with tab1:
                     styles_html += f"#{uid} [id='{b}'] {{ fill: #009432 !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
                 else: 
                     num_val = int(str(val).replace('%', ''))
-                    grad_id = f"grad_{uid}_{b}_{num_val}"
+                    grad_id = f"grad_{uid}_{b_clean}_{num_val}"
+                    # Renk geçişini (gradient) ve stili oluştur
                     defs_html += f'<linearGradient id="{grad_id}" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="{num_val}%" stop-color="#7bed9f" /><stop offset="{num_val}%" stop-color="#ffffff" /></linearGradient>\n'
                     styles_html += f"#{uid} [id='{b}'] {{ fill: url(#{grad_id}) !important; stroke: #000000 !important; stroke-width: 3px; }}\n"
             
-            defs_html += "</defs></svg>\n"
+            defs_html += "</defs>\n"
             styles_html += "</style>\n"
+            
+            # CSS ve Defs'i doğrudan SVG'nin İÇİNE zerk ediyoruz ki tarayıcı okuyabilsin
+            final_svg = re.sub(r'(<svg[^>]*>)', r'\1' + defs_html + styles_html, base_svg_clean, count=1, flags=re.IGNORECASE)
             
             full_html += f"""
             <div id="{uid}" class="page-container">
-                {defs_html}
-                {styles_html}
                 <div class="header-titles">
                     <h4>{secilen_yuklenici} | {secilen_proje} | {secilen_parsel} PARSEL</h4>
                     <h2>{imalat_adi}</h2>
                     <h5><b>{kirilim_adi}</b> - <i>{mahal}</i></h5>
                 </div>
-                <div class="svg-wrapper">{base_svg_clean}</div>
+                <div class="svg-wrapper">{final_svg}</div>
                 <div class="legend-box">
                     <div class="legend-item"><div class="color-box" style="background: #d9d9d9;"></div> İMALAT YOK</div>
                     <div class="legend-item"><div class="color-box" style="background: #ff4757;"></div> BAŞLANMADI</div>
